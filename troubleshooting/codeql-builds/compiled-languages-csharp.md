@@ -155,7 +155,9 @@ This can manifest through a variety of errors
 - `error ASPPARSE`
 - `[error]C:\Windows\Microsoft.NET\Framework\v4.0.30319\Config\web.config(113,0): Error ASPCONFIG: Could not load type`
 - `Error ASPCONFIG: It is an error to use a section registered as allowDefinition='MachineToApplication' beyond application level.`
-- `(AfterBuildCompiler target) -> D:\a\Orchard\Orchard\src\Orchard.Web\Modules\Orchard.Glimpse\web.config(38): error ASPCONFIG: Could not load file or assembly 'System.Web.Mvc, Version=5.2.3, Culture=neutral, PublicKeyToken=31bf3856ad364e35' or one of its dependencies. The located assembly's manifest definition does not match the assembly reference. (Exception from HRESULT: 0x80131040)`
+- `(AfterBuildCompiler target) -> <path>web.config(##): error ASPCONFIG: Could not load file or assembly '...' or one of its dependencies. The located assembly's manifest definition does not match the assembly reference. (Exception from HRESULT: 0x80131040)`
+- `(MvcBuildViews target) -> <path>\web.config(##):error ASPCONFIG: Could not load file or assembly '...' or one of its dependencies. The system cannot find the file specified.`
+- `(MvcBuildViews target) -> ASPNETCOMPILER : error ASPCONFIG: Could not load file or assembly '...' or one of its dependencies. An attempt was made to load a program with an incorrect format. `
 
 The CodeQL compiler tracer used for `csharp` will auto inject the `/p:MvcBuildViews=true` flag.  This pre-compilation of Views gives us the ability to extract the generated code from those files, leading to (potentially) better error reporting and location information if a query does flag an issue. The lack of view information passing through CodeQL to the compiler will lead to an incomplete database, where important dataflow sources/sinks/taint-steps are not included in the analysis.
 
@@ -168,7 +170,7 @@ For `Error ASPCONFIG: Could not load type 'X.Y.Z'`, ensure that you do not have 
 To avoid building and scanning any view code in your project (potential false negatives in the scan as view engine code may not be evaluated for vulnerabilities) and to workaround the requirement that MvcBuildViews is automatically injected.  Consider this [community contributed suggestion](https://github.com/github/codeql/issues/11890#issuecomment-1496970164):
 
 ```powershell
-# tweaking the csproj file with powershell during the GitHub Action so that the hard-coded condition "gets fooled", basically. Something like this:
+# tweaking the csproj file with powershell during the build so that the hard-coded target condition "gets fooled", basically. Something like this:
 
 $filePath = (Join-Path $pwd '\SUBFOLDER\YOURCSPROJFILE.csproj')
 $csproj = [xml](Get-Content $filePath)
@@ -216,11 +218,21 @@ With .NET we can employ a few mechanisms to remove code from CodeQL scans (e.g. 
 - Build in release mode - exclude test projects from that [build configuration](https://docs.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2015/ide/how-to-create-and-edit-configurations?view=vs-2015&redirectedfrom=MSDN#to-modify-a-solution-wide-build-configuration)
 
 ## Optimizations - CodeQL Engine
-	- CodeQL will (by default) pull in source code from your dependencies using CIL extraction to assist in mapping out your data flows. While this can  improve the precision of the results, this can also lead to a large increase in database size.  You might consider disabling this feature for a quick scan but running a cron based scan with the option enabled.
-	```yml  
-		env:
-		CODEQL_EXTRACTOR_CSHARP_OPTION_CIL: false
-	```
+- CodeQL will (by default) pull in source code from your dependencies using CIL extraction to assist in mapping out your data flows. While this can  improve the precision of the results, this can also lead to a large increase in database size.  You might consider disabling this feature for a quick scan but running a cron based scan with the option enabled.
+
+### GitHub Actions
+```yml  
+env:
+  CODEQL_EXTRACTOR_CSHARP_OPTION_CIL: false
+```
+### Azure DevOps Pipelines
+```yml  
+variables:  
+  # Disable CodeQL CSharp CIL mode
+  CODEQL_EXTRACTOR_CSHARP_OPTION_CIL: false
+```
+
+
 
 ## Optimizations - CodeQL Queries
 - Tweak your current codeql yml workflow in a few ways: 
@@ -247,11 +259,10 @@ With .NET we can employ a few mechanisms to remove code from CodeQL scans (e.g. 
 
 ## Vertical Scaling - Throw hardware at the software problem.  
 
-Large applications can be compute/memory/disk bound as the base Actions runners are small instances (2core/8GBram/14GB SSD).  See the [recommended hardware requirements for CodeQL](https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/recommended-hardware-resources-for-running-codeql) based on Codebase size.
--   Setup a [self-hosted CI action runner](https://docs.github.com/en/enterprise-cloud@latest/actions/hosting-your-own-runners/adding-self-hosted-runners#adding-a-self-hosted-runner-to-an-organization) in your infrastructure that has some more powerful specs that can handle your large application. 
-- [Actions larger runners ](https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners)
-	   - This allows for up to a 64 core machine with 256GB RAM and 2040 GB of SSD storage
-
+Large applications can be compute/memory/disk bound as the default hosted runners are small instances (2core/8GBram/14GB SSD). Any repository approaching 100k lines of csharp code will benefit from bigger hardware.  See the [recommended hardware requirements for CodeQL](https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/recommended-hardware-resources-for-running-codeql) based on Codebase size.
+-   On GitHub Actions, setup a [self-hosted CI action runner](https://docs.github.com/en/enterprise-cloud@latest/actions/hosting-your-own-runners/adding-self-hosted-runners#adding-a-self-hosted-runner-to-an-organization) in your infrastructure that has some more powerful specs that can handle your large application. 
+    - [Actions larger runners ](https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners) allows for up to a 64 core machine with 256GB RAM and 2040 GB of SSD storage
+- On Azure DevOps Pipelines, setup a [self-hosted agent](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/agents) on your own hardware or Virtual Machine Scale Set agents.
 		
 ## Horizontal Scaling - Continue to decompose your solution.  
 
